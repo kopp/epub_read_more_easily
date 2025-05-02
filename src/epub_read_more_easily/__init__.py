@@ -2,6 +2,7 @@
 
 import logging
 import re
+import zipfile
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -34,6 +35,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+logger.info(f"Using parser {PARSER}")
 
 # --- Constants ---
 TARGET_LANG: str = "de_DE"  # Target language for hyphenation (German)
@@ -205,6 +207,46 @@ def process_html_content(soup: BeautifulSoup, hyphenator: Hyphenator) -> None:
             process_text_node(text_node, hyphenator, soup)
 
 
+def process_epub_file(input_path: Path, output_path: Path) -> None:
+    """
+    Processes an EPUB file by modifying its HTML/XHTML content.
+
+    Args:
+        input_path: Path to the input EPUB file.
+        output_path: Path where the modified EPUB file should be saved.
+    """
+    logger.debug(f"Processing EPUB file: {input_path}")
+
+    # Ensure the output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(input_path, "r") as inzip, zipfile.ZipFile(
+            output_path, "w", zipfile.ZIP_DEFLATED
+        ) as outzip:
+            for item in inzip.infolist():
+                content = inzip.read(item.filename)
+                # Process HTML/XHTML files
+                if item.filename.lower().endswith((".html", ".xhtml")):
+                    logger.debug(f"Processing content file: {item.filename}")
+                    try:
+                        # Assume UTF-8 encoding, common in EPUBs
+                        html_content = content.decode("utf-8")
+                        processed_content = process_html_file_content(html_content)
+                        content = processed_content.encode("utf-8")
+                    except UnicodeDecodeError:
+                        logger.warning(f"Could not decode {item.filename} as UTF-8, copying file as is.")
+                    except Exception as e:
+                        logger.error(f"Error processing {item.filename}: {e}. Copying file as is.")
+                outzip.writestr(item, content)  # Write original or processed content
+    except zipfile.BadZipFile:
+        raise ValueError(f"Error: Input file '{input_path}' is not a valid EPUB/ZIP file.") from None
+    except Exception as e:
+        raise RuntimeError(f"An error occurred during EPUB processing: {e}") from e
+
+    logger.debug(f"EPUB processing successful. Result saved to: {output_path}")
+
+
 def process_html_file(input_path: Path, output_path: Path) -> None:
     """
     Main function: Reads an HTML file, processes it, and writes the result.
@@ -273,6 +315,7 @@ class Args(tap.TypedArgs):
     input_path: Path = tap.arg(help="Path to the input HTML file.", positional=True)
     inplace: bool = tap.arg(help="Modify the input file in-place.")
     output_path: Path | None = tap.arg(
+        "-o",
         help=(
             "Path to save the modified HTML file."
             " If not given (and no inplace operation is requested), based on input name with "
@@ -297,10 +340,13 @@ def emphasize_file_content(args: Args):
 
     input_kind = args.input_path.suffix
     html_input = (".html", ".xhtml")
+    epub_input = (".epub",)
     if input_kind in html_input:
         process_html_file(args.input_path, output_path)
+    elif input_kind in epub_input:
+        process_epub_file(args.input_path, output_path)
     else:
-        raise ValueError(f"Unable to handle {input_kind} inputs;" f" Supported inputs: {html_input}.")
+        raise ValueError(f"Unable to handle {input_kind} inputs;" f" Supported inputs: {html_input + epub_input}.")
 
 
 def main():
