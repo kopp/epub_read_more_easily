@@ -1,5 +1,6 @@
 """Emphasize every 2nd, 4th, ... syllaby per word to make the text easier to read."""
 
+import logging
 import re
 from pathlib import Path
 from typing import List, Optional, Union
@@ -32,6 +33,8 @@ except ImportError:
     exit(1)
 
 
+logger = logging.getLogger(__name__)
+
 # --- Constants ---
 TARGET_LANG: str = "de_DE"  # Target language for hyphenation (German)
 # Tags whose *direct* text content should not be modified
@@ -42,6 +45,9 @@ TAGS_TO_SKIP_COMPLETELY: List[str] = ["script", "style"]
 DEFAULT_SUFFIX = "_syll_emph"
 
 # --- Core Functions ---
+
+
+_HYPHENATOR_CACHE: dict[str, Hyphenator] = {}
 
 
 def get_hyphenator(lang: str) -> Optional[Hyphenator]:
@@ -55,23 +61,26 @@ def get_hyphenator(lang: str) -> Optional[Hyphenator]:
     Returns:
         An initialized Hyphenator instance or None if initialization fails.
     """
-    try:
-        # Check if the dictionary is installed
-        if not dictools.is_installed(lang):
-            print(f"Warning: Hyphenation dictionary for '{lang}' not found.")
-            print(f"Attempting to download (requires internet connection)...")
-            try:
-                dictools.install(lang)
-                print(f"Dictionary for '{lang}' successfully downloaded/installed.")
-            except Exception as e:
-                print(f"Error downloading/installing dictionary for '{lang}': {e}")
-                print("Hyphenation might not work correctly.")
-                return None
-        # Initialize
-        return Hyphenator(lang)
-    except Exception as e:
-        print(f"Error initializing the Hyphenator for '{lang}': {e}")
-        return None
+    global _HYPHENATOR_CACHE
+    if lang not in _HYPHENATOR_CACHE:
+        try:
+            # Check if the dictionary is installed
+            if not dictools.is_installed(lang):
+                logger.info(f"Hyphenation dictionary for '{lang}' not found.")
+                logger.info(f"Attempting to download (requires internet connection)...")
+                try:
+                    dictools.install(lang)
+                    logger.info(f"Dictionary for '{lang}' successfully downloaded/installed.")
+                except Exception as e:
+                    logger.error(f"Error downloading/installing dictionary for '{lang}': {e}")
+                    logger.error("Hyphenation might not work correctly.")
+                    return None
+            # Initialize
+            return Hyphenator(lang)
+        except Exception as e:
+            logger.error(f"Error initializing the Hyphenator for '{lang}': {e}")
+            return None
+    return _HYPHENATOR_CACHE.get(lang)
 
 
 def create_styled_syllables(
@@ -196,74 +205,66 @@ def process_html_content(soup: BeautifulSoup, hyphenator: Hyphenator) -> None:
             process_text_node(text_node, hyphenator, soup)
 
 
-def process_html_file(input_path: Path, output_path: Path) -> bool:
+def process_html_file(input_path: Path, output_path: Path) -> None:
     """
     Main function: Reads an HTML file, processes it, and writes the result.
 
     Args:
         input_path: Path to the input HTML file.
         output_path: Path where the modified HTML file should be saved.
-
-    Returns:
-        True on success, False on error.
     """
-    print(f"Processing file: {input_path}")
+    logger.debug(f"Processing file: {input_path}")
 
-    # 1. Initialize Hyphenator
-    hyphenator = get_hyphenator(TARGET_LANG)
-    if hyphenator is None:
-        print(f"Error: Could not initialize Hyphenator for '{TARGET_LANG}'. Aborting.")
-        return False
-
-    # 2. Read HTML file
+    # Read HTML file
     try:
         html_content = input_path.read_text()
-    except FileNotFoundError:
-        print(f"Error: Input file '{input_path}' not found.")
-        return False
+    except FileNotFoundError as e:
+        raise ValueError(f"Error: Input file '{input_path}' not found.") from e
     except Exception as e:
-        print(f"Error reading input file '{input_path}': {e}")
-        return False
+        raise ValueError(f"Error reading input file '{input_path}': {e}") from e
 
-    # 3. Parse HTML
-    print("Parsing HTML...")
+    processed = process_html_file_content(html_content)
+
+    # Ensure the output directory exists
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    output_path.write_text(processed)
+    logger.debug(f"Processing successful. Result saved to: {output_path}")
+
+
+def process_html_file_content(html_content: str) -> str:
+
+    logger.debug("Initialize Hyphenator")
+    hyphenator = get_hyphenator(TARGET_LANG)
+    if hyphenator is None:
+        raise RuntimeError(f"Error: Could not initialize Hyphenator for '{TARGET_LANG}'.")
+
+    logger.debug("Parsing HTML content")
     try:
         soup = BeautifulSoup(html_content, PARSER)
     except Exception as e:
-        print(f"Error parsing HTML: {e}")
-        return False
+        raise ValueError(f"Error parsing HTML: {e}") from e
 
-    # 4. Process HTML content
-    print("Applying syllable highlighting...")
+    logger.debug("Applying syllable highlighting...")
     process_html_content(soup, hyphenator)
 
-    # 5. Write modified HTML
-    try:
-        # Ensure the output directory exists
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+    # Generate modified HTML
 
-        # Write the modified HTML file
-        # str(soup) generally preserves structure well.
-        # soup.prettify() adds unwanted whitespace, in particular it will
-        # add whitespace behind behind each closing tag which will result in a
-        # space in the output text.
-        # The 'html5' formatter generates replacements (like &szlig; for ß),
-        # which make it valid html, but invalid xml (since for a valid XML
-        # document the entities need to be defined in a Document Type
-        # Definition, which is provided in a DOCTYPE stanza befor the <html>
-        # tag). Since we cannot guarantee that this is available, rather use
-        # minimal:
-        # > The default is formatter="minimal". Strings will only be processed
-        # > enough to ensure that Beautiful Soup generates valid HTML/XML:
-        # This does also generate unwanted whitespace, though, hence use simple
-        # str.
-        output_path.write_text(str(soup))
-        print(f"Processing successful. Result saved to: {output_path}")
-        return True
-
-    except Exception as e:
-        print(f"Error writing output file '{output_path}': {e}")
-        return False
+    # str(soup) generally preserves structure well.
+    # soup.prettify() adds unwanted whitespace, in particular it will
+    # add whitespace behind behind each closing tag which will result in a
+    # space in the output text.
+    # The 'html5' formatter generates replacements (like &szlig; for ß),
+    # which make it valid html, but invalid xml (since for a valid XML
+    # document the entities need to be defined in a Document Type
+    # Definition, which is provided in a DOCTYPE stanza befor the <html>
+    # tag). Since we cannot guarantee that this is available, rather use
+    # minimal:
+    # > The default is formatter="minimal". Strings will only be processed
+    # > enough to ensure that Beautiful Soup generates valid HTML/XML:
+    # This does also generate unwanted whitespace, though, hence use simple
+    # str.
+    return str(soup)
 
 
 class Args(tap.TypedArgs):
@@ -297,13 +298,9 @@ def emphasize_file_content(args: Args):
     input_kind = args.input_path.suffix
     html_input = (".html", ".xhtml")
     if input_kind in html_input:
-        success = process_html_file(args.input_path, output_path)
+        process_html_file(args.input_path, output_path)
     else:
         raise ValueError(f"Unable to handle {input_kind} inputs;" f" Supported inputs: {html_input}.")
-
-    # Exit with appropriate status code
-    if not success:
-        raise ValueError(f"Unable to process input file {args.input_path}.")
 
 
 def main():

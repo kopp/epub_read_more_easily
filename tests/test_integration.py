@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pytest import fixture
 
-from epub_read_more_easily import Args, emphasize_file_content
+from epub_read_more_easily import Args, emphasize_file_content, process_html_file_content
 
 
 @fixture
@@ -22,6 +22,11 @@ def _remove_whitespace(s: str | Path) -> str:
     if isinstance(s, Path):
         s = s.read_text()
     return "\n".join([line.strip() for line in s.splitlines() if len(line.strip()) > 0])
+
+
+def test_input_file__function(sample_input: Path, sample_expected_output: Path) -> None:
+    processed = process_html_file_content(sample_input.read_text())
+    assert _remove_whitespace(processed) == _remove_whitespace(sample_expected_output)
 
 
 def test_input_file(sample_input: Path, sample_expected_output: Path, tmp_path: Path) -> None:
@@ -51,4 +56,5 @@ def test_inplace(sample_input: Path, sample_expected_output: Path, tmp_path: Pat
     emphasize_file_content(args)
     assert tmp.exists()
 
+    assert _remove_whitespace(tmp) == _remove_whitespace(sample_expected_output)
     assert _remove_whitespace(tmp) == _remove_whitespace(sample_expected_output)
