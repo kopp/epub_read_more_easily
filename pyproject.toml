@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "epub_read_more_easily"
+version = "0.1"
+dependencies = [
+  "typed-argparse",
+  "lxml",
+  "beautifulsoup4",
+  "pyhyphen",
+]
+requires-python = ">=3.9"
+
+description = "emphasize every 2nd, 4th, ... syllaby in a word in an epub file to make text more easy to read."
+readme = "Readme.md"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["egg", "bacon", "sausage", "tomatoes", "Lobster Thermidor"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Programming Language :: Python"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest",
+  "ruff",
+  "mypy",
+]
+
+
+[project.scripts]
+help_to_read_epub_more_easily = "epub_read_more_easily:main"
