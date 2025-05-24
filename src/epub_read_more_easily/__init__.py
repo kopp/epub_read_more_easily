@@ -334,7 +334,7 @@ def emphasize_file_content(args: Args):
         assert args.output_path is None, "Please specify either an output or inplace."
         output_path = args.input_path
     elif args.output_path is None:
-        output_path = args.input_path.parent / (args.input_path.stem + DEFAULT_SUFFIX + ".html")
+        output_path = args.input_path.parent / (args.input_path.stem + DEFAULT_SUFFIX + ".epub")
     else:
         output_path = args.output_path
 
